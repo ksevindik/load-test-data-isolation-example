@@ -1,0 +1,16 @@
+spring:
+  datasource:
+    real:
+      jdbc-url: jdbc:postgresql://localhost:5432/loadtest
+      username: app_real_user
+      password: secret
+      driver-class-name: org.postgresql.Driver
+      pool-name: real-pool
+      maximum-pool-size: 10
+    test:
+      jdbc-url: jdbc:postgresql://localhost:5432/loadtest
+      username: app_test_user
+      password: secret
+      driver-class-name: org.postgresql.Driver
+      pool-name: test-pool
+      maximum-pool-size: 5

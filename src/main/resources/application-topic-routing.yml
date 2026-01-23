@@ -1,0 +1,41 @@
+spring:
+  kafka:
+    bootstrap-servers: kafka:29092
+    properties:
+      # SASL Configuration
+      security.protocol: SASL_PLAINTEXT
+      sasl.mechanism: SCRAM-SHA-256
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.example.loadtest.event
+        spring.json.value.default.type: com.example.loadtest.event.UserCreatedEvent
+
+# Topic routing configuration
+app:
+  kafka:
+    topics:
+      real: user-events.real
+      test: user-events.test
+    # Producer credentials (will be overridden by environment variables)
+    producer:
+      real:
+        username: prod_producer
+        password: prod_producer_secret
+      test:
+        username: test_producer
+        password: test_producer_secret
+    # Consumer credentials
+    consumer:
+      real:
+        username: prod_consumer
+        password: prod_consumer_secret
+        group-id: prod-consumer-group
+      test:
+        username: test_consumer
+        password: test_consumer_secret
+        group-id: test-consumer-group
