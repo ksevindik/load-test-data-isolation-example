@@ -8,6 +8,24 @@
 #   docker compose --profile app up -d  # Start with application
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: loadtest-postgres
+    environment:
+      POSTGRES_DB: loadtest
+      POSTGRES_USER: db_admin_user
+      POSTGRES_PASSWORD: secret
+    ports:
+      - "5432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ./docker/postgres:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U db_admin_user -d loadtest" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
     container_name: loadtest-zookeeper
@@ -108,3 +126,65 @@ services:
       KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM: SCRAM-SHA-256
       KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"kafka\" password=\"kafka_secret\";"
       DYNAMIC_CONFIG_ENABLED: "true"
+  redis:
+    image: redis:7-alpine
+    container_name: loadtest-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./docker/redis/users.acl:/etc/redis/users.acl:ro
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: [ "CMD", "redis-cli", "-u", "redis://admin:admin_secret@localhost:6379", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: loadtest-redis-commander
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      # Redis URL with ACL authentication: redis://username:password@host:port
+      REDIS_URL: redis://admin:admin_secret@redis:6379
+      HTTP_USER: admin
+      HTTP_PASSWORD: admin
+
+  app:
+    profiles:
+      - app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: loadtest-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
+      # Database
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/loadtest
+      SPRING_DATASOURCE_USERNAME: app_user
+      SPRING_DATASOURCE_PASSWORD: secret
+      SPRING_FLYWAY_URL: jdbc:postgresql://postgres:5432/loadtest
+      SPRING_FLYWAY_USER: db_admin_user
+      SPRING_FLYWAY_PASSWORD: secret
+      # Kafka
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      # Redis
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      # Redis routing (for cache-routing profile)
+      APP_REDIS_HOST: redis
+      APP_REDIS_PORT: 6379
