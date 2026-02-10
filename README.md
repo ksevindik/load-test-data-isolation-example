@@ -58,9 +58,40 @@ All isolation strategies are driven by the `X-Traffic-Type` header:
 
 ## PostgreSQL Data Isolation
 
+The `t_users` table uses **list partitioning** on the `is_test` column to physically separate production and test data:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       PostgreSQL                                 │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │           t_users (Partitioned Table)                    │   │
+│  │           PARTITION BY LIST (is_test)                    │   │
+│  │           + RLS Policies                                 │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                    │                    │                       │
+│                    ▼                    ▼                       │
+│     ┌──────────────────────┐  ┌──────────────────────┐        │
+│     │ t_users_production   │  │   t_users_test       │        │
+│     │   is_test = false    │  │   is_test = true     │        │
+│     │                      │  │                      │        │
+│     │ Production users     │  │ Load test users      │        │
+│     └──────────────────────┘  └──────────────────────┘        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Benefits of Partitioning
+
+| Benefit | Description |
+|---------|-------------|
+| **Physical Isolation** | Test and production data stored in separate physical segments |
+| **Easy Cleanup** | `TRUNCATE TABLE t_users_test;` instantly removes all test data |
+| **Query Performance** | PostgreSQL automatically prunes partitions based on `is_test` filter |
+| **Independent Maintenance** | Can vacuum/analyze partitions independently |
+
 ### Strategy 1: Session-Based Test Mode (Default)
 
-Uses a PostgreSQL session variable (`app.test_mode`) to dynamically switch between test and production data.
+Uses a PostgreSQL session variable (`app.test_mode`) to dynamically switch between test and production data. Combined with partitioning, this provides both logical and physical separation.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -80,10 +111,10 @@ Uses a PostgreSQL session variable (`app.test_mode`) to dynamically switch betwe
 │  │ RLS Policy checks: current_setting('app.test_mode')     │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
-│  ┌──────────────────┐    ┌──────────────────┐                 │
-│  │ Production Data  │    │    Test Data     │                 │
-│  │  (is_test=false) │    │  (is_test=true)  │                 │
-│  └──────────────────┘    └──────────────────┘                 │
+│  ┌──────────────────────┐    ┌──────────────────────┐         │
+│  │ t_users_production   │    │   t_users_test       │         │
+│  │  (is_test=false)     │    │  (is_test=true)      │         │
+│  └──────────────────────┘    └──────────────────────┘         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -92,6 +123,7 @@ Uses a PostgreSQL session variable (`app.test_mode`) to dynamically switch betwe
 2. Checks for `X-Traffic-Type: LOAD_TEST` header
 3. `SessionBasedTestMode` sets PostgreSQL session variable: `SET app.test_mode = 'true'`
 4. RLS policy filters data based on the session variable
+5. PostgreSQL routes queries to the appropriate partition
 
 **Pros:** Single database connection/user, simple configuration, dynamic switching per request
 
@@ -123,10 +155,10 @@ Uses separate database users (`app_real_user`, `app_test_user`) with fixed RLS p
 │  RLS Policy for app_real_user: is_test = false                 │
 │  RLS Policy for app_test_user: is_test = true                  │
 │                                                                 │
-│  ┌──────────────────┐    ┌──────────────────┐                 │
-│  │ Production Data  │    │    Test Data     │                 │
-│  │  (is_test=false) │    │  (is_test=true)  │                 │
-│  └──────────────────┘    └──────────────────┘                 │
+│  ┌──────────────────────┐    ┌──────────────────────┐         │
+│  │ t_users_production   │    │   t_users_test       │         │
+│  │  (is_test=false)     │    │  (is_test=true)      │         │
+│  └──────────────────────┘    └──────────────────────┘         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -134,10 +166,78 @@ Uses separate database users (`app_real_user`, `app_test_user`) with fixed RLS p
 1. `TrafficTypeFilter` intercepts incoming requests and sets `TrafficContextManager`
 2. `TrafficRoutingDataSource` selects appropriate connection pool based on context
 3. RLS policy enforces data isolation based on the connected user
+4. PostgreSQL routes queries to the appropriate partition
 
 **Pros:** Complete isolation at connection level, no session variable management, more secure
 
 **Cons:** Requires multiple connection pools, more complex configuration
+
+### Test Data Cleanup
+
+After load testing, cleanup is simple with partitioning:
+
+```sql
+-- Truncate test partition (instant)
+TRUNCATE TABLE t_users_test;
+
+-- Or detach and drop for complete cleanup
+ALTER TABLE t_users DETACH PARTITION t_users_test;
+DROP TABLE t_users_test;
+CREATE TABLE t_users_test PARTITION OF t_users FOR VALUES IN (true);
+```
+
+## Redis Cache Isolation
+
+Routes cache operations to use different key prefixes based on traffic type, with Redis ACL-enforced access control. This is enabled by default for all configurations.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              Application                                     │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    RoutingCacheManager                               │   │
+│  │   if trafficType == "LOAD_TEST" → testCacheManager                  │   │
+│  │   else                          → realCacheManager                  │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                    │                              │                         │
+│                    ▼                              ▼                         │
+│  ┌──────────────────────────┐    ┌──────────────────────────────────┐     │
+│  │    realCacheManager       │    │       testCacheManager           │     │
+│  │  - keyPrefix: "real:"     │    │  - keyPrefix: "test:"            │     │
+│  │  - TTL: 1 hour            │    │  - TTL: 10 minutes               │     │
+│  │  - user: app_real_user    │    │  - user: app_test_user           │     │
+│  └──────────────────────────┘    └──────────────────────────────────┘     │
+└───────────────────┬──────────────────────────────┬──────────────────────────┘
+                    │                              │
+                    ▼                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              Redis 7+                                        │
+│                                                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │ user app_real_user on >real_pwd ~real:* +@all                        │  │
+│  │ user app_test_user on >test_pwd ~test:* +@all                        │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  ┌─────────────────────────┐    ┌─────────────────────────────────────┐   │
+│  │   real:users::123       │    │   test:users::456                    │   │
+│  │   (TTL: 1 hour)         │    │   (TTL: 10 minutes)                  │   │
+│  └─────────────────────────┘    └─────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Redis Users and ACLs
+
+| User | Key Pattern | TTL | Description |
+|------|-------------|-----|-------------|
+| `app_real_user` | `real:*` | 1 hour | Production cache entries |
+| `app_test_user` | `test:*` | 10 min | Test cache entries (auto-cleanup) |
+
+### Cache Key Examples
+
+| Traffic Type | Cache Operation | Redis Key |
+|--------------|----------------|-----------|
+| Production | `@Cacheable(key = "#id")` | `real:users::123` |
+| Load Test | `@Cacheable(key = "#id")` | `test:users::456` |
 
 ## Kafka Event Isolation
 
@@ -251,71 +351,28 @@ Events are routed to separate topics based on traffic type, with SASL/SCRAM auth
 | `test_producer` | Write | `user-events.test` |
 | `test_consumer` | Read | `user-events.test` |
 
-## Redis Cache Isolation
-
-Routes cache operations to use different key prefixes based on traffic type, with Redis ACL-enforced access control. This is enabled by default for all configurations.
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Application                                     │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                    RoutingCacheManager                               │   │
-│  │   if trafficType == "LOAD_TEST" → testCacheManager                  │   │
-│  │   else                          → realCacheManager                  │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                    │                              │                         │
-│                    ▼                              ▼                         │
-│  ┌──────────────────────────┐    ┌──────────────────────────────────┐     │
-│  │    realCacheManager       │    │       testCacheManager           │     │
-│  │  - keyPrefix: "real:"     │    │  - keyPrefix: "test:"            │     │
-│  │  - TTL: 1 hour            │    │  - TTL: 10 minutes               │     │
-│  │  - user: app_real_user    │    │  - user: app_test_user           │     │
-│  └──────────────────────────┘    └──────────────────────────────────┘     │
-└───────────────────┬──────────────────────────────┬──────────────────────────┘
-                    │                              │
-                    ▼                              ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Redis 7+                                        │
-│                                                                             │
-│  ┌──────────────────────────────────────────────────────────────────────┐  │
-│  │ user app_real_user on >real_pwd ~real:* +@all                        │  │
-│  │ user app_test_user on >test_pwd ~test:* +@all                        │  │
-│  └──────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
-│  ┌─────────────────────────┐    ┌─────────────────────────────────────┐   │
-│  │   real:users::123       │    │   test:users::456                    │   │
-│  │   (TTL: 1 hour)         │    │   (TTL: 10 minutes)                  │   │
-│  └─────────────────────────┘    └─────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Redis Users and ACLs
-
-| User | Key Pattern | TTL | Description |
-|------|-------------|-----|-------------|
-| `app_real_user` | `real:*` | 1 hour | Production cache entries |
-| `app_test_user` | `test:*` | 10 min | Test cache entries (auto-cleanup) |
-
-### Cache Key Examples
-
-| Traffic Type | Cache Operation | Redis Key |
-|--------------|----------------|-----------|
-| Production | `@Cacheable(key = "#id")` | `real:users::123` |
-| Load Test | `@Cacheable(key = "#id")` | `test:users::456` |
-
 ## Database Schema
 
-### User Table
+### User Table (Partitioned)
 
 ```sql
+-- Partitioned table for physical data separation
 CREATE TABLE t_users (
-    id BIGINT PRIMARY KEY,
+    id BIGINT NOT NULL DEFAULT nextval('t_users_seq'),
     username VARCHAR(255) NOT NULL,
     password VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL,
-    is_test BOOLEAN NOT NULL DEFAULT false  -- Key field for isolation
-);
+    is_test BOOLEAN NOT NULL DEFAULT false,
+    PRIMARY KEY (id, is_test)  -- Partition key must be part of PK
+) PARTITION BY LIST (is_test);
+
+-- Production partition
+CREATE TABLE t_users_production PARTITION OF t_users
+    FOR VALUES IN (false);
+
+-- Test partition
+CREATE TABLE t_users_test PARTITION OF t_users
+    FOR VALUES IN (true);
 ```
 
 ### RLS Policies
