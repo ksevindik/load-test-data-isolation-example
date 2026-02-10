@@ -1,17 +1,7 @@
-# Redis ACL Configuration for Test/Real Data Isolation
-# 
-# This file defines users with key-pattern restrictions:
-# - app_real_user: Can only access keys with "real:" prefix
-# - app_test_user: Can only access keys with "test:" prefix
-
-# Default user (disabled for security)
 user default off nopass ~* -@all
 
-# Admin user for management and monitoring
 user admin on >admin_secret ~* +@all
 
-# Real traffic user - can only access real:* keys
 user app_real_user on >real_pwd resetkeys ~real:* +@all
 
-# Test traffic user - can only access test:* keys
 user app_test_user on >test_pwd resetkeys ~test:* +@all

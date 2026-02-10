@@ -54,12 +54,36 @@ services:
       - "2181:2181"
     volumes:
       - ./docker/kafka/zookeeper_jaas.conf:/etc/kafka/zookeeper_jaas.conf:ro
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Bootstrap admin SCRAM credentials in Zookeeper before Kafka starts
+  zookeeper-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: loadtest-zookeeper-init
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    volumes:
+      - ./docker/kafka/kafka_server_jaas.conf:/etc/kafka/kafka_jaas.conf:ro
+    environment:
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_jaas.conf"
+    command: >
+      bash -c "
+        echo 'Creating admin SCRAM credentials in Zookeeper...'
+        kafka-configs --zookeeper zookeeper:2181 --alter --add-config 'SCRAM-SHA-256=[password=admin_secret]' --entity-type users --entity-name admin
+        echo 'Admin SCRAM credentials created!'
+      "
 
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     container_name: loadtest-kafka
     depends_on:
-      - zookeeper
+      zookeeper-init:
+        condition: service_completed_successfully
     ports:
       - "9092:9092"
       - "29092:29092"
@@ -83,6 +107,7 @@ services:
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf"
     volumes:
       - ./docker/kafka/kafka_server_jaas.conf:/etc/kafka/kafka_server_jaas.conf:ro
+      - ./docker/kafka/admin.properties:/etc/kafka/admin.properties:ro
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092", "--command-config", "/etc/kafka/admin.properties"]
       interval: 10s
