@@ -429,7 +429,7 @@ This starts:
 - Kafka (port 9092) with SASL/SCRAM and ACLs
 - Zookeeper (port 2181)
 - Kafka UI (port 9080)
-- Redis Commander (port 8081)
+- RedisInsight (port 5540)
 
 ### 2. Build and run the application
 
@@ -537,8 +537,8 @@ MDC (Mapped Diagnostic Context) includes traffic type and test run ID in all log
 | Service | URL | Credentials |
 |---------|-----|-------------|
 | Swagger UI | http://localhost:8080/swagger-ui.html | - |
-| Kafka UI | http://localhost:9080 | Uses admin/admin_secret for Kafka SASL |
-| Redis Commander | http://localhost:8081 | admin/admin |
+| Kafka UI | http://localhost:9080 | Uses kafka/kafka_secret for Kafka SASL |
+| RedisInsight | http://localhost:5540 | Add connection: host=redis, port=6379, user=admin, password=admin_secret |
 
 ## Configuration Files
 
