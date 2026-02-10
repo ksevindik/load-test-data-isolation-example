@@ -141,19 +141,10 @@ services:
       timeout: 5s
       retries: 5
 
-  redis-commander:
-    image: rediscommander/redis-commander:latest
-    container_name: loadtest-redis-commander
-    depends_on:
-      redis:
-        condition: service_healthy
+  redisinsight:
+    image: redis/redisinsight:latest
     ports:
-      - "8081:8081"
-    environment:
-      # Redis URL with ACL authentication: redis://username:password@host:port
-      REDIS_URL: redis://admin:admin_secret@redis:6379
-      HTTP_USER: admin
-      HTTP_PASSWORD: admin
+      - "5540:5540"
 
   app:
     profiles:
