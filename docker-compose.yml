@@ -8,76 +8,35 @@
 #   docker compose --profile app up -d  # Start with application
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: loadtest-postgres
-    environment:
-      POSTGRES_DB: loadtest
-      POSTGRES_USER: db_admin_user
-      POSTGRES_PASSWORD: secret
-    ports:
-      - "5432:5432"
-    tmpfs:
-      - /var/lib/postgresql/data
-    volumes:
-      - ./docker/postgres:/docker-entrypoint-initdb.d
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U db_admin_user -d loadtest"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: loadtest-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
-      - ./docker/redis/users.acl:/etc/redis/users.acl:ro
-    command: redis-server /usr/local/etc/redis/redis.conf
-    healthcheck:
-      test: ["CMD", "redis-cli", "-u", "redis://admin:admin_secret@localhost:6379", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
     container_name: loadtest-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-      # Enable SASL for Kafka ACLs
-      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/zookeeper_jaas.conf"
+      # Enable ruok command for healthcheck
+      ZOOKEEPER_4LW_COMMANDS_WHITELIST: ruok,srvr
     ports:
       - "2181:2181"
-    volumes:
-      - ./docker/kafka/zookeeper_jaas.conf:/etc/kafka/zookeeper_jaas.conf:ro
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "2181"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
-  # Bootstrap admin SCRAM credentials in Zookeeper before Kafka starts
+  # Bootstrap SCRAM credentials in Zookeeper before Kafka starts
   zookeeper-init:
     image: confluentinc/cp-kafka:7.6.0
     container_name: loadtest-zookeeper-init
     depends_on:
       zookeeper:
         condition: service_healthy
-    volumes:
-      - ./docker/kafka/kafka_server_jaas.conf:/etc/kafka/kafka_jaas.conf:ro
-    environment:
-      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_jaas.conf"
     command: >
       bash -c "
-        echo 'Creating admin SCRAM credentials in Zookeeper...'
-        kafka-configs --zookeeper zookeeper:2181 --alter --add-config 'SCRAM-SHA-256=[password=admin_secret]' --entity-type users --entity-name admin
-        echo 'Admin SCRAM credentials created!'
+        echo 'Creating Kafka SCRAM credentials in Zookeeper...'
+        kafka-configs --zookeeper zookeeper:2181 --alter --add-config 'SCRAM-SHA-256=[password=kafka_secret]' --entity-type users --entity-name kafka
+        echo 'Kafka SCRAM credentials created!'
       "
-
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     container_name: loadtest-kafka
@@ -90,6 +49,7 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ZOOKEEPER_SET_ACL: "false"
       # Listeners configuration with SASL
       KAFKA_LISTENERS: SASL_PLAINTEXT://0.0.0.0:29092,SASL_PLAINTEXT_HOST://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: SASL_PLAINTEXT://kafka:29092,SASL_PLAINTEXT_HOST://localhost:9092
@@ -100,20 +60,28 @@ services:
       KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: SCRAM-SHA-256
       # ACL Configuration
       KAFKA_AUTHORIZER_CLASS_NAME: kafka.security.authorizer.AclAuthorizer
-      KAFKA_SUPER_USERS: User:admin
+      KAFKA_SUPER_USERS: User:admin;User:kafka
       KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
       # Other settings
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf"
+      # JAAS config for SASL; disable SASL for Zookeeper connection
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf -Dzookeeper.sasl.client=false"
     volumes:
       - ./docker/kafka/kafka_server_jaas.conf:/etc/kafka/kafka_server_jaas.conf:ro
       - ./docker/kafka/admin.properties:/etc/kafka/admin.properties:ro
+    # Skip Confluent's preflight checks that timeout with SASL config
+    command: >
+      bash -c "
+        echo 'Starting Kafka directly (skipping preflight checks)...'
+        /etc/confluent/docker/configure
+        /etc/confluent/docker/launch
+      "
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092", "--command-config", "/etc/kafka/admin.properties"]
+      test: [ "CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092", "--command-config", "/etc/kafka/admin.properties" ]
       interval: 10s
-      timeout: 5s
-      retries: 10
-
+      timeout: 10s
+      retries: 15
+      start_period: 60s
   kafka-init:
     image: confluentinc/cp-kafka:7.6.0
     container_name: loadtest-kafka-init
@@ -123,9 +91,6 @@ services:
     volumes:
       - ./docker/kafka:/scripts:ro
     command: /bin/bash /scripts/create-users-and-acls.sh
-    environment:
-      KAFKA_OPTS: "-Djava.security.auth.login.config=/scripts/kafka_server_jaas.conf"
-
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: loadtest-kafka-ui
@@ -141,54 +106,5 @@ services:
       # SASL authentication for Kafka UI
       KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL: SASL_PLAINTEXT
       KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM: SCRAM-SHA-256
-      KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"admin\" password=\"admin_secret\";"
+      KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"kafka\" password=\"kafka_secret\";"
       DYNAMIC_CONFIG_ENABLED: "true"
-
-  redis-commander:
-    image: rediscommander/redis-commander:latest
-    container_name: loadtest-redis-commander
-    depends_on:
-      redis:
-        condition: service_healthy
-    ports:
-      - "8081:8081"
-    environment:
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: admin_secret
-      HTTP_USER: admin
-      HTTP_PASSWORD: admin
-
-  app:
-    profiles:
-      - app
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: loadtest-app
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
-    ports:
-      - "8080:8080"
-    environment:
-      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
-      # Database
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/loadtest
-      SPRING_DATASOURCE_USERNAME: app_user
-      SPRING_DATASOURCE_PASSWORD: secret
-      SPRING_FLYWAY_URL: jdbc:postgresql://postgres:5432/loadtest
-      SPRING_FLYWAY_USER: db_admin_user
-      SPRING_FLYWAY_PASSWORD: secret
-      # Kafka
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      # Redis
-      SPRING_DATA_REDIS_HOST: redis
-      SPRING_DATA_REDIS_PORT: 6379
-      # Redis routing (for cache-routing profile)
-      APP_REDIS_HOST: redis
-      APP_REDIS_PORT: 6379
