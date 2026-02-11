@@ -58,36 +58,42 @@ All isolation strategies are driven by the `X-Traffic-Type` header:
 
 ## PostgreSQL Data Isolation
 
-The `t_users` table uses **list partitioning** on the `is_test` column to physically separate production and test data:
+The `t_users` table uses **composite partitioning** with two levels:
+- **Level 1 (LIST):** Partition by `is_test` to separate production and test data
+- **Level 2 (RANGE):** Sub-partition by `created_date` with yearly intervals
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                       PostgreSQL                                 │
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │           t_users (Partitioned Table)                    │   │
-│  │           PARTITION BY LIST (is_test)                    │   │
-│  │           + RLS Policies                                 │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                    │                    │                       │
-│                    ▼                    ▼                       │
-│     ┌──────────────────────┐  ┌──────────────────────┐        │
-│     │ t_users_production   │  │   t_users_test       │        │
-│     │   is_test = false    │  │   is_test = true     │        │
-│     │                      │  │                      │        │
-│     │ Production users     │  │ Load test users      │        │
-│     └──────────────────────┘  └──────────────────────┘        │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              PostgreSQL                                      │
+│                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │              t_users (Partitioned by LIST on is_test)                  │ │
+│  │              + RLS Policies                                            │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                    │                              │                         │
+│                    ▼                              ▼                         │
+│  ┌─────────────────────────────────┐  ┌─────────────────────────────────┐ │
+│  │ t_users_production (is_test=F)  │  │   t_users_test (is_test=T)      │ │
+│  │ PARTITION BY RANGE (created_date)│  │ PARTITION BY RANGE (created_date)│ │
+│  │                                 │  │                                 │ │
+│  │  ┌─────────────────────────┐   │  │  ┌─────────────────────────┐   │ │
+│  │  │ t_users_production_2026 │   │  │  │ t_users_test_2026       │   │ │
+│  │  │ t_users_production_2027 │   │  │  │ t_users_test_2027       │   │ │
+│  │  └─────────────────────────┘   │  │  └─────────────────────────┘   │ │
+│  └─────────────────────────────────┘  └─────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Benefits of Partitioning
+### Benefits of Composite Partitioning
 
 | Benefit | Description |
 |---------|-------------|
 | **Physical Isolation** | Test and production data stored in separate physical segments |
-| **Easy Cleanup** | `TRUNCATE TABLE t_users_test;` instantly removes all test data |
-| **Query Performance** | PostgreSQL automatically prunes partitions based on `is_test` filter |
-| **Independent Maintenance** | Can vacuum/analyze partitions independently |
+| **Time-Based Management** | Yearly partitions enable efficient data lifecycle management |
+| **Easy Cleanup** | Drop old yearly partitions: `DROP TABLE t_users_test_2026` |
+| **Query Performance** | PostgreSQL prunes partitions based on both `is_test` AND `created_date` |
+| **Independent Maintenance** | Can vacuum/analyze individual yearly partitions |
+| **Archival** | Detach and archive old yearly partitions independently |
 
 ### Strategy 1: Session-Based Test Mode (Default)
 
@@ -174,17 +180,30 @@ Uses separate database users (`app_real_user`, `app_test_user`) with fixed RLS p
 
 ### Test Data Cleanup
 
-After load testing, cleanup is simple with partitioning:
+With composite partitioning, you have flexible cleanup options:
 
 ```sql
--- Truncate test partition (instant)
-TRUNCATE TABLE t_users_test;
+-- Option 1: Drop a specific yearly test partition
+DROP TABLE t_users_test_2026;
 
--- Or detach and drop for complete cleanup
-ALTER TABLE t_users DETACH PARTITION t_users_test;
-DROP TABLE t_users_test;
-CREATE TABLE t_users_test PARTITION OF t_users FOR VALUES IN (true);
+-- Option 2: Truncate all test data for a specific year
+TRUNCATE TABLE t_users_test_2026;
+
+-- Option 3: Detach and archive old test partitions
+ALTER TABLE t_users_test DETACH PARTITION t_users_test_2026;
+-- (move to archive storage, then drop)
+DROP TABLE t_users_test_2026;
+
+-- Option 4: Create new yearly partition for upcoming year
+CREATE TABLE t_users_test_2028 PARTITION OF t_users_test
+    FOR VALUES FROM ('2028-01-01') TO ('2029-01-01');
 ```
+
+### Partition Maintenance
+
+New yearly partitions must be created before data arrives. Options:
+1. **Manual:** Create partitions ahead of time (e.g., create next year's partitions in December)
+2. **Automated:** Use `pg_partman` extension or a scheduled job to auto-create partitions
 
 ## Redis Cache Isolation
 
@@ -353,26 +372,35 @@ Events are routed to separate topics based on traffic type, with SASL/SCRAM auth
 
 ## Database Schema
 
-### User Table (Partitioned)
+### User Table (Composite Partitioned)
 
 ```sql
--- Partitioned table for physical data separation
+-- Composite partitioned table: LIST (is_test) + RANGE (created_date)
 CREATE TABLE t_users (
     id BIGINT NOT NULL DEFAULT nextval('t_users_seq'),
     username VARCHAR(255) NOT NULL,
     password VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL,
     is_test BOOLEAN NOT NULL DEFAULT false,
-    PRIMARY KEY (id, is_test)  -- Partition key must be part of PK
+    created_date TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    PRIMARY KEY (id, is_test, created_date)  -- All partition keys must be in PK
 ) PARTITION BY LIST (is_test);
 
--- Production partition
+-- Production partition (sub-partitioned by RANGE)
 CREATE TABLE t_users_production PARTITION OF t_users
-    FOR VALUES IN (false);
+    FOR VALUES IN (false)
+    PARTITION BY RANGE (created_date);
 
--- Test partition
+-- Test partition (sub-partitioned by RANGE)
 CREATE TABLE t_users_test PARTITION OF t_users
-    FOR VALUES IN (true);
+    FOR VALUES IN (true)
+    PARTITION BY RANGE (created_date);
+
+-- Yearly sub-partitions (example for 2026)
+CREATE TABLE t_users_production_2026 PARTITION OF t_users_production
+    FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');
+CREATE TABLE t_users_test_2026 PARTITION OF t_users_test
+    FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');
 ```
 
 ### RLS Policies

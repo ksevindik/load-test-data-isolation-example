@@ -2,6 +2,12 @@ package com.example.loadtest.config
 
 import com.example.loadtest.cache.RoutingCacheManager
 import com.example.loadtest.traffic.TrafficContextManager
+import com.fasterxml.jackson.annotation.JsonTypeInfo
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.SerializationFeature
+import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.cache.CacheManager
 import org.springframework.cache.annotation.EnableCaching
@@ -35,6 +41,22 @@ import java.time.Duration
 class RedisRoutingConfig(
     private val properties: RedisRoutingProperties
 ) {
+    
+    /**
+     * ObjectMapper for Redis serialization with type information.
+     * This enables polymorphic deserialization so cached objects are correctly typed.
+     */
+    private val redisObjectMapper: ObjectMapper by lazy {
+        val typeValidator = BasicPolymorphicTypeValidator.builder()
+            .allowIfBaseType(Any::class.java)
+            .build()
+        
+        jacksonObjectMapper().apply {
+            registerModule(JavaTimeModule())
+            disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+            activateDefaultTyping(typeValidator, ObjectMapper.DefaultTyping.NON_FINAL, JsonTypeInfo.As.PROPERTY)
+        }
+    }
 
     // ==================== Connection Factories ====================
 
@@ -104,7 +126,7 @@ class RedisRoutingConfig(
                 RedisSerializationContext.SerializationPair.fromSerializer(StringRedisSerializer())
             )
             .serializeValuesWith(
-                RedisSerializationContext.SerializationPair.fromSerializer(GenericJackson2JsonRedisSerializer())
+                RedisSerializationContext.SerializationPair.fromSerializer(GenericJackson2JsonRedisSerializer(redisObjectMapper))
             )
             .disableCachingNullValues()
     }
