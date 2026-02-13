@@ -28,3 +28,6 @@ CREATE POLICY test_user_update_policy ON t_users
     FOR UPDATE TO app_test_user
     USING (is_test = true)
     WITH CHECK (is_test = true);
+
+-- Force RLS for table owner as well
+ALTER TABLE t_users FORCE ROW LEVEL SECURITY;
