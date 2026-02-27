@@ -59,6 +59,16 @@ allOpen {
 	annotation("jakarta.persistence.Embeddable")
 }
 
-tasks.withType<Test> {
-	useJUnitPlatform()
+tasks.named<Test>("test") {
+	useJUnitPlatform {
+		excludeTags("benchmark")
+	}
+}
+
+tasks.register<Test>("benchmark") {
+	description = "Runs RLS performance benchmark tests"
+	group = "verification"
+	useJUnitPlatform {
+		includeTags("benchmark")
+	}
 }
