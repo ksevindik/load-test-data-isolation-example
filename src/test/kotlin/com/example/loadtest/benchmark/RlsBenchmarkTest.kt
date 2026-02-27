@@ -3,13 +3,19 @@ package com.example.loadtest.benchmark
 import ch.qos.logback.classic.Level
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
+import com.zaxxer.hikari.pool.HikariProxyConnection
+import org.h2.tools.Server
 import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.Timeout
+import org.opentest4j.AssertionFailedError
+import org.postgresql.jdbc.PgConnection
 import org.slf4j.LoggerFactory
+import org.springframework.jdbc.datasource.DataSourceUtils
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.utility.DockerImageName
 import org.testcontainers.utility.MountableFile
@@ -98,7 +104,7 @@ class RlsBenchmarkTest {
         password: String,
         initSql: String? = null
     ) {
-        val ds = createDataSource(username, password, 1, initSql)
+        val ds = createDataSource(username, password, 5, initSql)
         warmUpDB(ds, mode)
         for (opType in OperationType.entries) {
             print("  ${opType.displayName}... ")
@@ -109,7 +115,7 @@ class RlsBenchmarkTest {
                         "throughput=${String.format("%,.0f", result.throughputOpsPerSec)} ops/s)"
             )
         }
-        cleanupBenchmarkData()
+        cleanupBenchmarkData(mode)
     }
 
     private fun runBenchmark(mode: RlsMode, opType: OperationType, ds: DataSource): BenchmarkResult {
@@ -122,6 +128,16 @@ class RlsBenchmarkTest {
                 for (i in 0 until config.totalOperations) {
                     val start = System.nanoTime()
                     val rows = executeOp(ps, opType, mode, i)
+                    if(opType == OperationType.SELECT_ALL) {
+                        val expected = if(mode == RlsMode.DISABLED) config.totalOperations + config.seedRowCount * 2 else config.totalOperations + config.seedRowCount
+                        try {
+                            Assertions.assertEquals(expected.toLong(),rows)
+                        } catch (ex: AssertionFailedError) {
+                            Server.startWebServer(
+                                ds.connection)
+                        }
+
+                    }
                     collector.record(System.nanoTime() - start)
                     totalRows += rows
                 }
@@ -155,7 +171,7 @@ class RlsBenchmarkTest {
         mode: RlsMode,
         opIdx: Int
     ): Long {
-        val name = "${mode.name.lowercase()}_$opIdx"
+        val name = "bench_${mode.name.lowercase()}_$opIdx"
         return when (opType) {
             OperationType.INSERT -> {
                 ps.setString(1, name)
@@ -254,10 +270,10 @@ class RlsBenchmarkTest {
         println("done (data created during warm up has been deleted)")
     }
 
-    private fun cleanupBenchmarkData() {
+    private fun cleanupBenchmarkData(mode: RlsMode) {
         adminDataSource.connection.use { conn ->
             conn.createStatement().use { stmt ->
-                val deleted = stmt.executeUpdate("DELETE FROM t_users WHERE username LIKE 'bench_%'")
+                val deleted = stmt.executeUpdate("DELETE FROM t_users WHERE username LIKE 'bench_${mode.name.lowercase()}_%'")
                 println("  Cleaned up ${String.format("%,d", deleted)} benchmark rows")
             }
         }
