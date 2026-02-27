@@ -210,6 +210,7 @@ class RlsBenchmarkTest {
     // ── Data Seeding & Cleanup ──────────────────────────────────────────────
 
     private fun seedData() {
+        println()
         print("Seeding data... ")
         adminDataSource.connection.use { conn ->
             conn.autoCommit = false
@@ -378,14 +379,39 @@ class RlsBenchmarkTest {
                     )
                 }
             }
+
+            if (opType == OperationType.SELECT_ALL && baseline != null && baseline.rowsPerOperation > 0) {
+                val baselineUsPerRow = baseline.latency.p50Micros / baseline.rowsPerOperation
+                println()
+                println("  Normalized per-row latency (p50):")
+                println(
+                    String.format(
+                        "    %-23s %8.4f us/row  (%,d rows/op)",
+                        baseline.rlsMode.displayName, baselineUsPerRow, baseline.rowsPerOperation
+                    )
+                )
+                for (mode in listOf(RlsMode.SESSION_BASED, RlsMode.DEDICATED_USER)) {
+                    val r = results.find { it.rlsMode == mode && it.operationType == opType } ?: continue
+                    if (r.rowsPerOperation > 0) {
+                        val usPerRow = r.latency.p50Micros / r.rowsPerOperation
+                        val overheadPct = ((usPerRow - baselineUsPerRow) / baselineUsPerRow) * 100
+                        println(
+                            String.format(
+                                "    %-23s %8.4f us/row  (%,d rows/op)  overhead: %+.1f%%",
+                                mode.displayName, usPerRow, r.rowsPerOperation, overheadPct
+                            )
+                        )
+                    }
+                }
+            }
         }
 
         println()
         println("-- Notes ${"-".repeat(89)}")
         println("  * All SELECT/UPDATE queries include created_date range for RANGE partition pruning.")
         println("  * SELECT ALL without RLS returns all rows (production + test) for the year,")
-        println("    while RLS modes return only production rows. Latency difference")
-        println("    for this operation includes result set size difference.")
+        println("    while RLS modes return only production rows. The 'Normalized per-row latency'")
+        println("    section adjusts for this difference by dividing p50 by rows/op.")
         println("  * Each operation is auto-committed (one transaction per operation).")
         println("  * Latency includes parameter binding, execution, and result iteration.")
 

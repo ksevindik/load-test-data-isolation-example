@@ -74,6 +74,7 @@ data class BenchmarkResult(
 ) {
     val wallClockTimeMs: Double get() = wallClockTimeNanos / 1_000_000.0
     val throughputOpsPerSec: Double get() = totalOperations / (wallClockTimeNanos / 1_000_000_000.0)
+    val rowsPerOperation: Long get() = if (totalOperations > 0) affectedRows / totalOperations else 0
 }
 
 data class SystemInfoData(
