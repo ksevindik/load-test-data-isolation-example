@@ -35,6 +35,10 @@ class TrafficContextManager(private val sessionBasedTestMode: SessionBasedTestMo
         return TrafficContextManager.isTestTraffic()
     }
 
+    fun getTestRunId() : String {
+        return MDC.get(MDC_TEST_RUN_ID)
+    }
+
     /**
      * Sets traffic context from a TrafficContext object.
      * This method sets MDC values and marks test mode if applicable.

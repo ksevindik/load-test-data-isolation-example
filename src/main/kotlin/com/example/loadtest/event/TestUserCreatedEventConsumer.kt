@@ -33,7 +33,6 @@ class TestUserCreatedEventConsumer {
     )
     fun onTestUserCreated(
         @Payload event: UserCreatedEvent,
-        @Header(name = "X-Traffic-Type", required = false) trafficType: String?,
         @Header(name = "X-Test-Run-Id", required = false) testRunId: String?
     ) {
         logger.info(
@@ -41,19 +40,12 @@ class TestUserCreatedEventConsumer {
             event.id,
             event.username,
             event.email,
-            trafficType ?: "UNKNOWN",
+            "TEST",
             testRunId ?: "-"
         )
 
         // Track the event but don't execute production business logic
         consumedEvents.add(event)
-        
-        // Optional: You could add test-specific logic here:
-        // - Collect metrics about test events
-        // - Verify event structure
-        // - Clean up test data after test runs
-        
-        logger.debug("Test event consumed and tracked (no business logic executed)")
     }
 
     // Methods for testing and verification

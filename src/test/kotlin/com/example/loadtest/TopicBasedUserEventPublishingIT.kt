@@ -133,12 +133,6 @@ class TopicBasedUserEventPublishingIT : BaseIT() {
             assertEquals(user.id, event.id)
             assertEquals("topic_routing_prod_user", event.username)
             assertFalse(event.isTest)
-
-            // Verify header
-            val trafficTypeHeader = record.headers().lastHeader(TopicRoutingUserEventPublisher.HEADER_TRAFFIC_TYPE)
-            assertNotNull(trafficTypeHeader)
-            assertEquals("PRODUCTION", String(trafficTypeHeader!!.value()))
-
         } finally {
             trafficContextManager.clearTrafficContext()
             container.stop()
@@ -175,9 +169,6 @@ class TopicBasedUserEventPublishingIT : BaseIT() {
             assertTrue(event.isTest)
 
             // Verify headers
-            val trafficTypeHeader = record.headers().lastHeader(TopicRoutingUserEventPublisher.HEADER_TRAFFIC_TYPE)
-            assertNotNull(trafficTypeHeader)
-            assertEquals("LOAD_TEST", String(trafficTypeHeader!!.value()))
 
             val testRunIdHeader = record.headers().lastHeader(TopicRoutingUserEventPublisher.HEADER_TEST_RUN_ID)
             assertNotNull(testRunIdHeader)

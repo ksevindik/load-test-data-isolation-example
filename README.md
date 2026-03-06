@@ -583,6 +583,60 @@ MDC (Mapped Diagnostic Context) includes traffic type and test run ID in all log
 | `docker/kafka/create-users-and-acls.sh` | Kafka users, topics, and ACLs |
 | `docker/kafka/kafka_server_jaas.conf` | Kafka SASL configuration |
 
+## RLS Performance Benchmark
+
+The project includes a dedicated benchmark that measures the latency overhead of PostgreSQL Row Level Security across the three RLS modes used in this project.
+
+### What It Measures
+
+| Operation | Description |
+|-----------|-------------|
+| INSERT | Insert a single row into `t_users` |
+| SELECT by ID | Select a row by `username` with `created_date` range |
+| SELECT ALL | Select all visible rows with `created_date` range |
+| UPDATE | Update a row by `username` with `created_date` range |
+
+Each operation is executed **10,000 times** (single-threaded) against each of the three modes:
+
+| Mode | User | RLS Policies |
+|------|------|-------------|
+| **RLS Disabled** | `app_user` | No policies applied |
+| **Session-based RLS** | `app_user` | Session variable `app.test_mode` controls visibility |
+| **Dedicated-user RLS** | `app_real_user` | Role-based policies enforce visibility |
+
+### How It Works
+
+1. A PostgreSQL 16 Testcontainer is started with the same user setup as production (`docker/postgres/01-init-app-users.sql`)
+2. The `t_users` table is created with composite partitioning (LIST + RANGE)
+3. **5,000 production + 5,000 test** rows are seeded
+4. Each phase applies the corresponding migration (V1, V2, V3) incrementally and runs all four CRUD operations
+5. Benchmark rows are cleaned up between phases to maintain consistent state
+6. All SELECT/UPDATE queries include `created_date` range filters to leverage RANGE partition pruning
+
+### Normalized SELECT ALL Comparison
+
+Without RLS, `SELECT ALL` returns both production and test rows, while RLS-enabled modes return only production rows. To provide a fair comparison of RLS overhead, the report includes a **normalized per-row latency** section that divides the p50 latency by the number of rows returned per operation.
+
+### Report Output
+
+The benchmark produces a detailed report including:
+- System information (OS, JVM, CPUs, GC, heap)
+- Per-operation latency percentiles (p25, p50, p75, p99, p99.5)
+- Wall clock time, throughput (ops/s), and total affected rows
+- Overhead percentage vs. the RLS Disabled baseline (p50)
+- Normalized per-row latency for SELECT ALL
+- Heap usage before and after
+
+### Running the Benchmark
+
+The benchmark is excluded from the default `test` task and must be run explicitly:
+
+```bash
+./gradlew benchmark
+```
+
+The benchmark is tagged with `@Tag("benchmark")` in JUnit 5 and typically takes 3-6 minutes depending on hardware.
+
 ## Integration Tests
 
 The project includes comprehensive integration tests using Testcontainers that verify all isolation mechanisms work correctly.
@@ -620,7 +674,7 @@ Integration tests verify Redis ACL enforcement using inline user definitions:
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all tests (excludes benchmarks)
 ./gradlew test
 
 # Run Redis isolation tests
@@ -628,6 +682,9 @@ Integration tests verify Redis ACL enforcement using inline user definitions:
 
 # Run Kafka topic routing tests
 ./gradlew test --tests "com.example.loadtest.TopicBasedUserEventPublishingIT"
+
+# Run RLS performance benchmark
+./gradlew benchmark
 ```
 
 ## Benefits Summary

@@ -31,16 +31,14 @@ class RealUserCreatedEventConsumer {
         containerFactory = "realKafkaListenerContainerFactory"
     )
     fun onRealUserCreated(
-        @Payload event: UserCreatedEvent,
-        @Header(name = "X-Traffic-Type", required = false) trafficType: String?,
-        @Header(name = "X-Test-Run-Id", required = false) testRunId: String?
+        @Payload event: UserCreatedEvent
     ) {
         logger.info(
             "Processing REAL user created event: userId={}, username={}, email={}, trafficType={}",
             event.id,
             event.username,
             event.email,
-            trafficType ?: "PRODUCTION"
+            "PRODUCTION"
         )
 
         // Business logic for production user creation

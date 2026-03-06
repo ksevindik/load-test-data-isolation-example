@@ -1,6 +1,7 @@
 package com.example.loadtest.event
 
 import com.example.loadtest.config.TopicRoutingProperties
+import com.example.loadtest.traffic.TrafficContextManager
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.kafka.clients.producer.ProducerRecord
 import org.apache.kafka.common.header.internals.RecordHeader
@@ -26,7 +27,8 @@ class TopicRoutingUserEventPublisher(
     @Qualifier("realKafkaTemplate") private val realKafkaTemplate: KafkaTemplate<String, String>,
     @Qualifier("testKafkaTemplate") private val testKafkaTemplate: KafkaTemplate<String, String>,
     private val objectMapper: ObjectMapper,
-    private val topicRoutingProperties: TopicRoutingProperties
+    private val topicRoutingProperties: TopicRoutingProperties,
+    private val trafficContextManager: TrafficContextManager
 ) : UserEventPublisher {
     private val logger = LoggerFactory.getLogger(TopicRoutingUserEventPublisher::class.java)
 
@@ -37,9 +39,8 @@ class TopicRoutingUserEventPublisher(
     }
 
     override fun publishUserCreated(event: UserCreatedEvent) {
-        val trafficType = MDC.get("trafficType")
         val testRunId = MDC.get("testRunId")
-        val isTestTraffic = trafficType == LOAD_TEST_VALUE
+        val isTestTraffic = trafficContextManager.isTestTraffic()
 
         val topic = if (isTestTraffic) {
             topicRoutingProperties.topics.test
@@ -62,10 +63,6 @@ class TopicRoutingUserEventPublisher(
             payload
         )
 
-        // Add traffic headers
-        if (trafficType != null) {
-            record.headers().add(RecordHeader(HEADER_TRAFFIC_TYPE, trafficType.toByteArray()))
-        }
         if (testRunId != null && testRunId != "-") {
             record.headers().add(RecordHeader(HEADER_TEST_RUN_ID, testRunId.toByteArray()))
         }
@@ -78,7 +75,7 @@ class TopicRoutingUserEventPublisher(
                     "Published UserCreatedEvent for user ${event.id} to topic {} partition {} (trafficType: {})",
                     topic,
                     result.recordMetadata.partition(),
-                    trafficType ?: "PRODUCTION"
+                    if(isTestTraffic) LOAD_TEST_VALUE else  "PRODUCTION"
                 )
             }
         }
