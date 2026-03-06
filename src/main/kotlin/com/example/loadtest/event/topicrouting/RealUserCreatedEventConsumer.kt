@@ -1,9 +1,9 @@
-package com.example.loadtest.event
+package com.example.loadtest.event.topicrouting
 
+import com.example.loadtest.event.UserCreatedEvent
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Profile
 import org.springframework.kafka.annotation.KafkaListener
-import org.springframework.messaging.handler.annotation.Header
 import org.springframework.messaging.handler.annotation.Payload
 import org.springframework.stereotype.Component
 import java.util.concurrent.CopyOnWriteArrayList

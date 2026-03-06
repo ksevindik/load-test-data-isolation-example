@@ -1,5 +1,6 @@
-package com.example.loadtest.event
+package com.example.loadtest.event.singletopic
 
+import com.example.loadtest.event.UserCreatedEvent
 import org.slf4j.LoggerFactory
 import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.messaging.handler.annotation.Header
@@ -38,7 +39,7 @@ class UserCreatedEventConsumer {
 
         // Process production user created event
         logger.info("Processing PRODUCTION user created event for user ${event.id} (username: ${event.username}, email: ${event.email})")
-        
+
         // Here you would add your actual business logic for handling new user creation
         // For example: send welcome email, sync to external system, update analytics, etc.
         processUserCreatedEvent(event)

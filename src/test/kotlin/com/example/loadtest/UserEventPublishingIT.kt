@@ -1,8 +1,8 @@
 package com.example.loadtest
 
-import com.example.loadtest.event.SingleTopicUserEventPublisher
+import com.example.loadtest.event.singletopic.SingleTopicUserEventPublisher
 import com.example.loadtest.event.UserCreatedEvent
-import com.example.loadtest.event.UserCreatedEventConsumer
+import com.example.loadtest.event.singletopic.UserCreatedEventConsumer
 import com.example.loadtest.service.UserService
 import com.example.loadtest.traffic.TrafficContext
 import com.example.loadtest.traffic.TrafficContextManager

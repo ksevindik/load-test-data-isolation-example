@@ -1,5 +1,6 @@
-package com.example.loadtest.event
+package com.example.loadtest.event.topicrouting
 
+import com.example.loadtest.event.UserCreatedEvent
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Profile
 import org.springframework.kafka.annotation.KafkaListener

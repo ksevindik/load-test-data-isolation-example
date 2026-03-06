@@ -1,6 +1,8 @@
-package com.example.loadtest.event
+package com.example.loadtest.event.topicrouting
 
 import com.example.loadtest.config.TopicRoutingProperties
+import com.example.loadtest.event.UserCreatedEvent
+import com.example.loadtest.event.UserEventPublisher
 import com.example.loadtest.traffic.TrafficContextManager
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.kafka.clients.producer.ProducerRecord

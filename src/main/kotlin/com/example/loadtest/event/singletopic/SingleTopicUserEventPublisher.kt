@@ -1,5 +1,7 @@
-package com.example.loadtest.event
+package com.example.loadtest.event.singletopic
 
+import com.example.loadtest.event.UserCreatedEvent
+import com.example.loadtest.event.UserEventPublisher
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.kafka.clients.producer.ProducerRecord
 import org.apache.kafka.common.header.internals.RecordHeader
@@ -30,7 +32,7 @@ class SingleTopicUserEventPublisher(
 
     override fun publishUserCreated(event: UserCreatedEvent) {
         val payload = objectMapper.writeValueAsString(event)
-        
+
         val record = ProducerRecord<String, String>(
             USER_EVENTS_TOPIC,
             null,
